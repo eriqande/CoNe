@@ -1,15 +1,3 @@
-#define UN_EXTERN
-
-/* comment out this #define line to avoid the renormalizing involving the
-ExtractNormo */ 
-#define DO_RENORMO_OVER_LOCI
-
-#define MAX_ALLELES 500
-#define FILE_LINES 100   /* the number of lines in the XXp.txt files. */
-
-/* if the log of the probability ratios reaches this point just call it zero */
-#define CALLITZERO -40
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
@@ -18,66 +6,11 @@ ExtractNormo */
 #include "ECA_MemAlloc.h"
 #include "ranlib.h"
 #include "MCTypesEtc.h"
+#include "ECA_Opt3.h"
+#include "cone.h"
 
-typedef struct {
-	int K; /* number of alleles */
-	int Kin0;  /* number of alleles found in the time 0 sample */
-	int n0;
-	int nT;
-	int *A0; 
-	int *AT;
-	double *predpars;
-	dval **R; /* an array of the MC estimates of P(A0|nf)  */
-	double ***P;  /* the stored probabilities, indexed by [allele][nf][af] */
-	double *NormoExtract;   /* for a normalization to pull out of each value so they sum to one */
-	double LocOverallNormo;
-} ldat;  /* locus data */
-
-typedef struct {
-	int start;
-	int end;
-	double *P;
 	
-} CoalProbs;
-
-
-typedef struct {
-	double N;
-	double t;    /* the scaled time that this corresponds to */
-/*	double **P;  /* for pointing to the probabilities, one array fo */
-	double *LocLikes;  /* log likelihood for the individual loci */
-	double *LocLikeVars;
-	double Like;
-	double LikeVar;
-	CoalProbs *CP;
-} Nstruct;
-
-
-
-void GetCoNeFileProbs(Nstruct *Ns, int Num, ldat *loca, int NumLoc, int T);
-void PrintNsLong(Nstruct *Ns);
-void GetCoNeData(ldat **loc, char **argv, int argc, int *NumLoc, double *T,  int *NumReps, char *phrase, Nstruct **Ns);
-void EchoCoNeData(ldat *loc, int NumLoc);
-void PrintNProbs(Nstruct *Ns, int NumNs, ldat *loc, int NumLoc, int Verbosity);
-double LogPrA0givenAf(int *a0, int *af, int K);
-double ComputeNeLikes(ldat *loc, Nstruct *Ns, int NumLoc);
-double SimConstrainedCMD(int * Af, int nf, int K, double *beta, int *A0, double ***P);
-void ProbAfGivenA0_CDF_Array(double a, double b, int n, double *P, int a0, int n0);
-void AddReps(dval **probs, int nf, int NReps, ldat *loc);
-void PrintUsage(char *msg);
-double Rrecurs(int ii,int ji,int ki, double t);
-double Wrecurs(int ii, int ji, double t);
-double Tavare1984recurs(int i, int j, double t, double Const);
-double ExpectedNumberOfLineages(int i, double t);
-double Tavare1984by_recurs(int i, int j, double t);
-
-/* some global variables */
-int gMax_n0;  /* for the largest n0 out of all the loci */
-int gNumNs;  /* the nuumber of N's we are keeping track of */
-char gProbsPath[10000];	
-double gPrior;
-	
-	
+/*	
 void PrintUsage(char *msg) 
 {
 	printf("\n%s\n",msg);
@@ -96,252 +29,280 @@ void PrintUsage(char *msg)
 	printf("\n\t\tHence, R=1 is the \"Unit information prior\".  This is the default.\n\n");
 	exit(1);
 }
-	
-int main(int argc, char **argv)
-{
-	int nf; /* number of founder lineages, assumed known here */
-	double T; /* the number of generations */
-	int i,NumReps;
-	long seed1, seed2;
-	char phrase[200];
-	ldat *locarray;
-	Nstruct *Ns;
-	int NumLoc;
-	int MaxN_index = 0;
-	double MaxN_LogLike = -999999.9;
-	double x,y,uconf,lconf,bd;
-	double TotOverLociExtract;
-	
-	gMax_n0 = 0;
-	
-	if(argc == 1) {
-		PrintUsage(NULL);
-	}
-	else {
-		
-		GetCoNeData(&locarray,argv,argc,&NumLoc,&T,&NumReps, phrase, &Ns);
-		GetCoNeFileProbs(Ns, gNumNs, locarray,NumLoc,T); 
-
-	}
-	
-	EchoCoNeData(locarray,NumLoc);
-		
-	/* PrintNProbs(Ns, gNumNs, locarray, NumLoc, 1); */
-/*	PrintNsLong(Ns);  */
-	
-	
-	printf("\n\tNumReps: %d",NumReps);
-	phrtsd(phrase,&seed1, &seed2);
-	setall(seed1, seed2);
-	printf("\n\tSeedPhrase: %s", phrase);
-	printf("\n\tSeeds:  %ld %ld",seed1,seed2);
-	printf("\n\n");
-	
-
-	for(i=0;i<NumLoc;i++)  {  double maxlogprob=-9999999.9;
-		printf("LOCUS: %d\n",i+1);
-		printf("nf Ave  Var  SD  NormoExtract   expNormoExtract  LogAvePlusNormoExtract  \n");
-		for(nf=locarray[i].Kin0; nf<=locarray[i].n0; nf++) {
-			AddReps(locarray[i].R,nf,NumReps, &(locarray[i]));
-			printf("%d  %e   %e     %e   %f   %e    %f\n",nf, locarray[i].R[nf]->Ave, locarray[i].R[nf]->Var, 
-					sqrt(locarray[i].R[nf]->Var),locarray[i].NormoExtract[nf],
-					exp(locarray[i].NormoExtract[nf]), log(locarray[i].R[nf]->Ave)+locarray[i].NormoExtract[nf]);
-			
-			/* we are going to cut this off if the prob has dropped very low */
-			if(  maxlogprob < log(locarray[i].R[nf]->Ave)+locarray[i].NormoExtract[nf])
-				maxlogprob = log(locarray[i].R[nf]->Ave)+locarray[i].NormoExtract[nf];
-			if(log(locarray[i].R[nf]->Ave)+locarray[i].NormoExtract[nf] - maxlogprob < CALLITZERO) {
-				printf("Truncating evaluation beyond this point.  Calling it zero...\n");
-				while(nf<=locarray[i].n0) {
-					locarray[i].R[nf]->Ave = 0.0;
-					locarray[i].R[nf]->Var = 0.0;
-					locarray[i].NormoExtract[nf] = -999999.9;
-					nf++;
-				}
-			} 
-			
-
-		}
-	}
-	
-	
-	TotOverLociExtract = ComputeNeLikes(locarray,Ns,NumLoc);
-	
-	printf("\nOverall Results:\n");
-	printf("Ne  t  LogLike  Like  SD\n");
-	for(i=0;i<gNumNs;i++)  {
-		printf("%.3f  %f  %f   %e     %e\n",Ns[i].N,Ns[i].t, 
-						log(Ns[i].Like),Ns[i].Like,sqrt(Ns[i].LikeVar));
-		if(MaxN_LogLike < log(Ns[i].Like) ) {
-			MaxN_LogLike = log(Ns[i].Like);
-			MaxN_index = i;
-		}
-	}
-	
-	
-	/* now report the max (by parabolic interpolation) and the 1.96 units of 
-		log likelihood "confidence intervals" (by linear interpolation).  */
-	if(MaxN_index == 0  || MaxN_index == gNumNs-1) {
-		printf("MaxByParabolicInterplotation:  -999.999  -999.999  -999.999\n");
-	} 
-	else {
-		i=MaxN_index;
-		y = ParabolicMaxInterp(Ns[i-1].N,Ns[i].N,Ns[i+1].N,
-				log(Ns[i-1].Like),log(Ns[i].Like),log(Ns[i+1].Like), &x);
-		printf("MaxByParabolicInterpolation:  %f   %f    %f  ( N t LogLike )\n",x,(double)T/(2.0*x), y);
-	}
-	lconf = -999.999;
-	uconf = -999.999;
-	bd = y - 1.96;
-	for(i=0;i<gNumNs-1;i++)  {
-		if(log(Ns[i].Like) < bd && log(Ns[i+1].Like) > bd)  {
-			lconf =  Ns[i].N + (bd - log(Ns[i].Like)) * 
-						(Ns[i+1].N - Ns[i].N) /  ( log(Ns[i+1].Like) - log(Ns[i].Like) );
-		}
-		if(log(Ns[i].Like) > bd && log(Ns[i+1].Like) < bd)  {
-			uconf = Ns[i].N + (bd - log(Ns[i].Like)) * 
-						(Ns[i+1].N - Ns[i].N) /  ( log(Ns[i+1].Like) - log(Ns[i].Like) );
-		}
-	}
-	printf("LowerSupportLimit: %f   %f  ( N  t )\n",lconf, T/(2.0*lconf) );
-	printf("UpperSupportLimit: %f   %f  ( N  t )\n",uconf, T/(2.0*uconf) );
-	
-	printf("ThisAmountTakenOutOfLogLikelihood:  %f\n", TotOverLociExtract);
-	printf("PriorUsedForAlleleFrequencies_[PRIOR]:  %f\n",gPrior);
-	return(0);
-}
+*/	
 
 
-void GetCoNeData(ldat **loc, char **argv, int argc, int *NumLoc, double *T,  int *NumReps, char *phrase, Nstruct **Ns)
+
+void GetCoNeData(char *FILENAME, ldat **loc, char **argv, int argc, int *NumLoc, double *T,  int *NumReps, char *phrase, Nstruct **Ns)
 {
 	int i,j,l,K,n0,nT,temp;
 	FILE *in;
-	char INPUT, FILENAME[500];
-	int NumSam;
 	double Nlo,Nhi,Nstep;
+	int NumSam;
+
+	int File_f = 0,
+		T_f = 0,
+		Path_f = 0,
+		N_f = 0,
+		Seed_f = 0,
+		Nlo_hi_step_f = 0,
+		Prior_f = 0;
+		
 	
-	/* test to see if it is command line for one locus, or file for multiple loci */
-	i=1;
-	sprintf(gProbsPath,"%s",argv[i++]);
-	if(argv[i][0] == '-') {
-		INPUT = argv[i][1];
-		i++;
+	DECLARE_ECA_OPT_VARS;
+	
+	/* some defaults */
+	gPrior = 1.0;
+	sprintf(phrase,"");
+	
+	
+	SET_OPT_WIDTH(28);
+	SET_ARG_WIDTH(17);
+	SET_PROGRAM_NAME("cone");
+	SET_PROGRAM_SHORT_DESCRIPTION("a program for estimating Ne");
+	SET_PROGRAM_LONG_DESCRIPTION(
+		CoNe
+		computes the likelihood of Ne given data on two temporally spaced
+		genetic samples.  The statistical model used is based on the
+		coalescent of the gene copies drawn in the second sample\054 as
+		described in Berthier et al. (2003) Genetics 2003. 160:741-51.
+		The Monte Carlo computations to compute the likelihood\054
+		however\054 were developed by Eric Anderson\054 and are orders of
+		magnitude faster than previous implementations. 
+ 
+		\n\nDetails of the algorithm are given in Anderson (2005) Genetics 170:955-967.
+	);
+	SET_VERSION("VERSION: 1.02\nAUTHOR: Eric C. Anderson (eric.anderson@noaa.gov)\nDATE: 1 August 2007")
+	SET_PROGRAM_AUTHOR_STRING("Eric C. Anderson (eric.anderson@noaa.gov)");
+	SET_VERSION_HISTORY("\
+				\n\nVERSION: 1.02\nAUTHOR: Eric C. Anderson (eric.anderson@noaa.gov)\nDATE: 1 August 2007\
+				\nCHANGES:\
+				\n1. Modified options input to use ECA_Opt3, so it can ouput to guiLiner.\
+				\n\nVERSION: 1.01\nAUTHOR: Eric C. Anderson (eric.anderson@noaa.gov)\nDATE: 28 September 2005\
+				\nCHANGES:\
+				\n1. Added the LOC_SPECIFIC_LOGLS lines on the output.  These\
+				\n   provide locus specific log-likelihood curves.\
+				\n2. Removed the ALL_LOCI lines of output because they are meaningless\
+				\n   when sample sizes differ between loci.\
+				\n3. Fixed a bug in the companion utility \"simCoNeprob\" that \
+				\n   caused spurious results if the number\
+				\n   of lineages at time T was very large, and few replicates were\
+				\n   run in simCoNeprob.  (Thanks to Stuart Barker for catching this.) \
+				\nCOPYRIGHT: Federal Gov't Work.  No copyright.\n\n\
+				\n\nVERSION: 1.0\nAUTHOR: Eric C. Anderson (eric.anderson@noaa.gov)\nDATE: 7 March 2005\nCOPYRIGHT: Federal Gov't Work.  No copyright.\n\n\
+				\n\nVERSION: 1.0 beta\nAUTHOR: Eric C. Anderson (eric.anderson@noaa.gov)\nDATE: 21 April 2004\nCOPYRIGHT: Federal Gov't Work.  No copyright. \n\n")
+	
+
+	BEGIN_OPT_LOOP
+	
+		OPEN_SUBSET(Data Analysis Options, Data Analysis Options, These options control the inputs and methods for the CoNe analysis);
+	
+		if ( REQUIRED_OPTION(Data File,
+				File_f,
+				f,
+				file-name,
+				F,
+				pathname of the data file,
+				F is the name of the file in which you have your data.  It is in the same format as
+				data files for TM3 (by Pierre Berthier) 
+				and TMVP (by Mark Beaumont)
+				The data file should start  with a 0 (this is a strange vestige of some sort 
+				from TM3 or TMVP) followed by the number of time periods
+				***which in this case must
+				always be 2*** 
+				followed by the number of loci.  Then data for each locus consists of
+				the number of alleles observed at the locus followed by a row of counts
+				of the different alleles observed in the first sample and a row of counts
+				of the different alleles observed at the second sample. (By first sample I mean the
+				sample taken first in time going forward.  Hence\054 the second sample is the sample that
+				was collected most recently.)  There must be only
+				integers and whitespace in the file.  An example file is shown in the FILES section
+				of the manual pages.  NOTE! It turns out that it is not essential that the counts of alleles
+				observed in the first sample (the one further back in the past) be integers.  It turns out
+				to be convenient to express them as real numbers in some cases\054 so I have recoded it so that they
+				can be real numbers and not just integers.  Now when the data file is echoed to standard input\054 these counts are expressed
+				as real numbers.  Do not let this alarm you.  Everything is OK\054 still.
+				 ) ) {
+			if( ARGS_EQ(1) ) {
+				GET_STR(FILENAME);
+			}
+		}
+		if ( REQUIRED_OPTION(Probs File Path,
+					Path_f,
+					p,
+					path-to-probs-files,
+					D, 
+					directory path to XXXpr.txt files ,
+					This is the pathway to files containing the precomputed probabilities of
+					having j lineages remaining at scaled time t given that you started with
+					i lineages.
+					Note that the trailing slash is required.
+					For example on my system 
+					~/Documents/eca_code/CoNe/probs/ is the pathway.
+					The probs files are a collection of files named
+					XXXpr.txt
+					where XXX is a number giving the number of gene copies in the 
+					second sample.  These files have been precomputed using the program
+					simCoNeprob and are described below in FILES.  The CoNe distribution
+					includes precomputed XXXpr.txt files with XXX ranging from 10 to 400.  This
+					represents samples of between 5 and 200 diploid organisms.  For different sample
+					sizes it is necessary to create new XXXpr.txt files using simCoNeprob which is
+					also included with the CoNe distribution.
+		) ) {
+			if( ARGS_EQ(1) ) {
+				GET_STR(gProbsPath);
+			}
+		}
+		if ( REQUIRED_OPTION(
+				Number of Generations,
+				T_f,
+				T,
+				gens-between,
+				R,
+				generations between samples, 
+				R is the number
+					of generations between samples.  It may be specified as a non-integer in order to allow
+					for a non-integer number of generations.  
+		) ) {
+			if( ARGS_EQ(1) ) {
+				*T = GET_DUB;
+			}
+		}
+		if ( REQUIRED_OPTION(
+				Monte Carlo Reps,
+				N_f,
+				m,
+				mc-reps,
+				J,
+				number of Monte Carlo reps,
+				J is the number
+					of importance sampling reps to perform for each value of the number of 
+					genes ancestral to the second sample on each locus.  I have found the importance
+					sampling algorithm to be good enough that 100 J=100 gives reliable results and
+					usually runs very quickly.  However; on a final run of your data set J should be
+					much larger.  You can get an idea of whether J should be larger by the width of the
+					Monte Carlo confidence intervals around the estimated likelihood curve.
+		) ) {
+			if( ARGS_EQ(1) ) {
+				*NumReps = GET_INT;
+			}
+		}
+		if ( REQUIRED_OPTION(
+				Ne Values,
+				Nlo_hi_step_f,
+				n,
+				ne-lo-hi-step,
+				R1 R2 R3, 
+				values of Ne to compute L(Ne) at ,
+				sets the values of Ne for which the likelihood will be computed.
+					R1 is the lowest value of Ne. R2 is the highest value of Ne. R3 is
+					the step size between values of Ne.  For values of Ne such that T/(2Ne)
+					is smaller than .06 (or so) the precomputed values of scaled time
+					(stored in the appropriate XXXpr.txt file (see the description of the -p option)) will be
+					used.  So the step size may not be that given by R3.  Arguments need 
+					not be given as real numbers.  An integer (like 250) will work just fine.
+					) ) {
+			if( ARGS_EQ(3) ) {
+				Nlo = GET_DUB;
+				Nhi = GET_DUB;
+				Nstep = GET_DUB;
+				if(Nlo>Nhi) {
+					fprintf(stderr,"Error Processing Option -n/--ne-lo-hi-step! The first argument is less than the second argument.\n");
+					OPT_ERROR;
+				}
+			}
+		}
+		if (OPTION(
+				Allele Freq Prior,
+				Prior_f,
+				q,
+				prior,
+				R,
+				allele frequency prior parameter,
+				R specifies the prior distribution  for  the
+              allele frequencies.  R=0 makes the prior a uniform Dirichlet distribution.
+              R>0 makes the parameters
+              of the Dirichlet prior are R/K. Hence R=1 is  the so-called unit 
+              information prior.  R=1 is the default.) ) {
+			if( ARGS_EQ(1) ) {
+				gPrior = GET_DUB;
+				if(gPrior < 0.0) {
+					fprintf(stderr,"Error Processing Option -q/--prior!  The argument of this option must be greater than zero\n");
+					OPT_ERROR;
+				}
+			}
+		}
+		if ( OPTION(
+				Random Seed Phrase,
+				Seed_f,
+				s,
+				seed-phrase,
+				S,
+				random number seed-phrase ,
+				S is a single string (no spaces) that will be used to seed the random number generator.  If 
+			this option is not invoked then a seed is chosen based on the current time or---if the file
+			cone_seeds is present---the seeds are taken from that file.  Upon completion of the 
+			program the next random number seeds in series are printed to the file cone_seeds.
+			) ) {
+			if( ARGS_EQ(1) ) {
+				 GET_STR(phrase);;
+			}
+		}
+		CLOSE_SUBSET
+		
+	END_OPT_LOOP
+		
+/*		
+	if(!Prior_f)  {  /* in this case, there is not  specification for PRIOR */
+/*		printf("Using Default Unit-Information Prior for Allele Frequencies\n");
+	}
+	else if(gPrior==0.0) {
+		printf("Using Uniform Prior for Allele Frequencies\n");
 	}
 	else {
-		PrintUsage("You've gotta give us the -f or the -c option!");
+		printf("Using Dirichet parameters %f/K for Allele Frequencies\n",gPrior);
 	}
+*/
 	
-	if(INPUT=='c') {
-		*NumLoc=1;
-		*loc = (ldat *)ECA_CALLOC(*NumLoc, sizeof(ldat));
-		(*loc)[0].K = atoi(argv[i++]);
-		K = (*loc)[0].K;
-		(*loc)[0].A0 = (int *)ECA_CALLOC(K,sizeof(int));
-		(*loc)[0].AT = (int *)ECA_CALLOC(K,sizeof(int));
-		(*loc)[0].predpars = (double *)ECA_CALLOC(K,sizeof(double));
-		for(nT=0,j=0;j<K;j++)  {
-			(*loc)[0].AT[j] = atoi(argv[i++]);
-			nT += (*loc)[0].AT[j];
-			(*loc)[0].predpars[j] = (*loc)[0].AT[j] + 1.0;
-		}
-		(*loc)[0].Kin0 = 0;
-		for(n0=0,j=0;j<K;j++) {
-			(*loc)[0].A0[j] = atoi(argv[i++]);
-			n0 += (*loc)[0].A0[j];
-			(*loc)[0].Kin0 += ((*loc)[0].A0[j] > 0);
-		}
-		(*loc)[0].P = NULL;
-		(*loc)[0].R = DvalVector(0,n0,0.0,0.0,0.0);
-		(*loc)[0].n0 = n0;
-		(*loc)[0].nT = nT;
-		(*loc)[0].NormoExtract = (double *)ECA_CALLOC(n0+1,sizeof(double));
-		if(gMax_n0 < n0) gMax_n0 = n0;
-		
-		*T = atof(argv[i++]);
-		*NumReps = atoi(argv[i++]);
-		sprintf(phrase,"%s",argv[i++]);
-		Nlo = atof(argv[i++]);
-		Nhi = atof(argv[i++]);
-		Nstep = atof(argv[i++]);
-		if(i==argc)  {  /* in this case, there is not  specification for PRIOR */
-			gPrior = 1.0;
-			printf("Using Default Unit-Information Prior for Allele Frequencies\n");
-		}
-		else if(i<argc) {
-			gPrior = (double)atof(argv[i++]);
-			if(gPrior==0.0) {
-				printf("Using Uniform Prior for Allele Frequencies\n");
-			}
-			else {
-				printf("Using Dirichet parameters %f/K for Allele Frequencies\n",gPrior);
-			}
-		}	
-		
-		
-		
+	if( (in = fopen(FILENAME,"r")) == NULL ) {
+		printf("\nCan't open file: %s\n\nExiting...\n",FILENAME);
+		exit(1);
 	}
-	if(INPUT=='f')  {
-		sprintf(FILENAME,"%s",argv[i++]);
-		*T = atof(argv[i++]);
-		*NumReps = atoi(argv[i++]);
-		sprintf(phrase,"%s",argv[i++]);
-		Nlo = atof(argv[i++]);
-		Nhi = atof(argv[i++]);
-		Nstep = atof(argv[i++]);
-		if(i==argc)  {  /* in this case, there is not  specification for PRIOR */
-			gPrior = 1.0;
-			printf("Using Default Unit-Information Prior for Allele Frequencies\n");
-		}
-		else if(i<argc) {
-			gPrior = (double)atof(argv[i++]);
-			if(gPrior==0.0) {
-				printf("Using Uniform Prior for Allele Frequencies\n");
-			}
-			else {
-				printf("Using Dirichet parameters %f/K for Allele Frequencies\n",gPrior);
-			}
+	fscanf(in,"%d",&temp);
+	if(temp != 0)  {
+		printf("\nSorry, can't take transposed data.  Data file must start with a 0\n\nExiting...\n\n");
+		exit(1);
+	}
+	fscanf(in,"%d",&NumSam);
+	if(NumSam != 2)  {
+		printf("\nSorry, this program allows for only two samples in time.\n\nExiting...\n\n");
+		exit(1);
+	}
+	fscanf(in,"%d",NumLoc);
+	*loc = (ldat *)ECA_CALLOC(*NumLoc, sizeof(ldat));
+	for(l=0;l<*NumLoc;l++) {
+		fscanf(in,"%d",&((*loc)[l].K) );
+		K = (*loc)[l].K;
+		(*loc)[l].A0 = (int *)ECA_CALLOC(K,sizeof(int));
+		(*loc)[l].AT = (double *)ECA_CALLOC(K,sizeof(double));
+		(*loc)[l].predpars = (double *)ECA_CALLOC(K,sizeof(double));
+		for(j=0,nT=0;j<K;j++)  {
+			fscanf(in,"%lf",&((*loc)[l].AT[j]));
+			nT += (*loc)[l].AT[j];
+			(*loc)[l].predpars[j] = (*loc)[l].AT[j] + 1.0;
 		}	
-		
-		if( (in = fopen(FILENAME,"r")) == NULL ) {
-			printf("\nCan't open file: %s\n\nExiting...\n",FILENAME);
-			exit(1);
+		(*loc)[l].Kin0 = 0;
+		for(n0=0,j=0;j<K;j++) {
+			fscanf(in,"%d",&((*loc)[l].A0[j]) );
+			n0 += (*loc)[l].A0[j];
+			(*loc)[l].Kin0 += ((*loc)[l].A0[j] > 0);
 		}
-		fscanf(in,"%d",&temp);
-		if(temp != 0)  {
-			printf("\nSorry, can't take transposed data.  Data file must start with a 0\n\nExiting...\n\n");
-			exit(1);
-		}
-		fscanf(in,"%d",&NumSam);
-		if(NumSam != 2)  {
-			printf("\nSorry, this program allows for only two samples in time.\n\nExiting...\n\n");
-			exit(1);
-		}
-		fscanf(in,"%d",NumLoc);
-		*loc = (ldat *)ECA_CALLOC(*NumLoc, sizeof(ldat));
-		for(l=0;l<*NumLoc;l++) {
-			fscanf(in,"%d",&((*loc)[l].K) );
-			K = (*loc)[l].K;
-			(*loc)[l].A0 = (int *)ECA_CALLOC(K,sizeof(int));
-			(*loc)[l].AT = (int *)ECA_CALLOC(K,sizeof(int));
-			(*loc)[l].predpars = (double *)ECA_CALLOC(K,sizeof(double));
-			for(j=0,nT=0;j<K;j++)  {
-				fscanf(in,"%d",&((*loc)[l].AT[j]));
-				nT += (*loc)[l].AT[j];
-				(*loc)[l].predpars[j] = (*loc)[l].AT[j] + 1.0;
-			}	
-			(*loc)[l].Kin0 = 0;
-			for(n0=0,j=0;j<K;j++) {
-				fscanf(in,"%d",&((*loc)[l].A0[j]) );
-				n0 += (*loc)[l].A0[j];
-				(*loc)[l].Kin0 += ((*loc)[l].A0[j] > 0);
-			}
-			(*loc)[l].P = NULL;
-			(*loc)[l].R = DvalVector(0,n0,0.0,0.0,0.0);
-			(*loc)[l].n0 = n0;
-			(*loc)[l].nT = nT;
-			(*loc)[l].NormoExtract = (double *)ECA_CALLOC(n0+1,sizeof(double));
-			if(gMax_n0 < n0) gMax_n0 = n0;
-		}
+		(*loc)[l].P = NULL;
+		(*loc)[l].R = DvalVector(0,n0,0.0,0.0,0.0);
+		(*loc)[l].n0 = n0;
+		(*loc)[l].nT = nT;
+		(*loc)[l].NormoExtract = (double *)ECA_CALLOC(n0+1,sizeof(double));
+		if(gMax_n0 < n0) gMax_n0 = n0;
 		
 	}
 	fclose(in);
@@ -467,7 +428,10 @@ void GetCoNeFileProbs(Nstruct *Ns, int Num, ldat *loca, int NumLoc, int T)
 			DoneIt[nn] = 1;
 			sprintf(FNAME,"%s%dpr.txt",gProbsPath,nn);
 			if( (in = fopen(FNAME, "r"))==NULL) {
-				printf("\n\nError! Unable to find probs file:\n\t%s\nfor locus %d\nExiting to system!\n",FNAME,j+1);
+				printf("\n\nError! Unable to find probs file:\n\t%s\nfor locus %d\n",FNAME,j+1);
+				printf("You may have incorrectly specified the pathway-to-probs-files\n");
+				printf("or you may not have the appropriate XXXpr.txt file.  See the documentation\n");
+				printf("for instructions on using simCoNeprob to make new files as needed.\n\nExiting to system...\n\n");
 				exit(1);
 			}
 			for(i=Num;i<gNumNs;i++) {
@@ -500,17 +464,20 @@ void GetCoNeFileProbs(Nstruct *Ns, int Num, ldat *loca, int NumLoc, int T)
 void EchoCoNeData(ldat *loc, int NumLoc)
 {
 	int i,j;
-	printf("0\n2\n%d\n",NumLoc);
+	printf("DATFILE : 0\nDATFILE : 2\nDATFILE : %d\n",NumLoc);
 	for(i=0;i<NumLoc;i++)  {
-		printf("%d\n",loc[i].K);
+		printf("DATFILE : %d\nDATFILE : ",loc[i].K);
 		for(j=0;j<loc[i].K;j++)  
-			printf("%d ",loc[i].AT[j]);
-		printf("\n");
+			printf("%f ",loc[i].AT[j]);
+		printf("\nDATFILE : ");
 		for(j=0;j<loc[i].K;j++)  
 			printf("%d ",loc[i].A0[j]);
 		printf("\n");
 	}
 }
+
+
+
 
 
 /* 
@@ -576,9 +543,9 @@ void AddReps(dval **probs, int nf, int NReps, ldat *loc)
 		n0 += loc->A0[k];
 		nonzero += (loc->A0[k] > 0);
 		if(gPrior==0.0) /* here is where we set the prior on allele freqs */
-			predpars[k] = (double)(loc->AT[k]) + 1.0; 
+			predpars[k] = (loc->AT[k]) + 1.0; 
 		else 
-			predpars[k] = (double)(loc->AT[k]) + gPrior / (double)K;    
+			predpars[k] = (loc->AT[k]) + gPrior / (double)K;    
 	} 
 		
 	/* if loc->P is not allocated to, then take care of that */
@@ -636,6 +603,10 @@ void AddReps(dval **probs, int nf, int NReps, ldat *loc)
 		}
 	}
 }
+
+
+
+
 
 
 double ComputeNeLikes(ldat *loc, Nstruct *Ns, int NumLoc)
@@ -721,6 +692,22 @@ double ComputeNeLikes(ldat *loc, Nstruct *Ns, int NumLoc)
 		}
 		
 	}
+	
+	
+	/* now we print out some intermediate output about the log-like from each locus */
+	printf("LOC_SPECIFIC_LOGLS  :   Ne     t    ");
+	for(l=0;l<NumLoc;l++)
+		printf("Loc%d  ",l+1);
+	printf("\n");
+	for(i=0;i<gNumNs;i++)  {
+		printf("LOC_SPECIFIC_LOGLS   :    %.3f    %f   ",Ns[i].N, Ns[i].t);
+		for(l=0;l<NumLoc;l++) {	
+			printf("%.3f   ",log(Ns[i].LocLikes[l]));
+		}	
+		printf("\n");
+	}
+	
+	
 	
 	/* now we have all the likelihoods for the various Ne's at different loci, and 
 	   we have to combine those all into a single overall Ne.  This is not so hard...
