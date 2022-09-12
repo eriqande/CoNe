@@ -1,5 +1,15 @@
 # cone  --  a program for estimating Ne
 
+## Binaries
+
+This repo contains a binary for Mac OSX in the `bin` directory at:
+
+- `bin/Darwin/CoNe`
+
+This seems to run on both Arm64 and Intel Macs.
+
+## Compiling 
+
 To get and compile this do like so:
 ```sh
   # first clone it from GitHub
